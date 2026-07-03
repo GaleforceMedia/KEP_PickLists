@@ -4,6 +4,7 @@ import tempfile
 import os
 import zipfile
 import io
+import shutil
 
 # Import our client layouts
 from mp_layout import generate_picklists as format_mamas_papas
@@ -43,13 +44,21 @@ left_col, right_col = st.columns([1, 2], gap="large")
 with left_col:
     st.subheader("1. Setup & Upload")
     
-    # Removed Custom option to keep UI clean for the dispatch team
     client_option = st.selectbox("Select Layout Mode", ("Tim Hortons", "Mamas & Papas"))
     
-    # Dynamic text box for campaign naming
     campaign_title = st.text_input("Campaign Title (Prints on PDF)", "Enter Campaign Name...")
     
-    # Upload multiple files enabled
+    # --- NEW: CONDITIONAL IMAGE UPLOADER ---
+    use_images = False
+    image_files = None
+    if client_option == "Mamas & Papas":
+        use_images = st.checkbox("Include Product Images (Thumbnails)")
+        if use_images:
+            st.caption("Upload images named by Column Letter (e.g., J.jpg) or Product Code. You can upload multiple images or a single .zip file.")
+            image_files = st.file_uploader("Upload Images or .zip", type=["jpg", "jpeg", "png", "zip"], accept_multiple_files=True)
+            
+    st.divider()
+    
     uploaded_files = st.file_uploader("Upload raw Excel files (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
 # --- LIVE PREVIEW & GENERATION LOGIC ---
@@ -58,23 +67,32 @@ with right_col:
     
     if uploaded_files:
         try:
-            # We base the preview on the FIRST uploaded file in the batch
             first_file = uploaded_files[0]
             raw_df = pd.read_excel(first_file)
             
-            # Show up to 20 rows of the raw data
             st.write(f"**Previewing:** `{first_file.name}` (Showing top 20 rows)")
             st.dataframe(raw_df.head(20), use_container_width=True, height=450)
             
-            # Generation Button
             generate_standard_btn = st.button(f"Generate {client_option} PDFs ({len(uploaded_files)} files)")
             
             if generate_standard_btn:
-                # Check if a title was entered when using Mamas & Papas
                 if client_option == "Mamas & Papas" and (campaign_title == "" or campaign_title == "Enter Campaign Name..."):
                      st.warning("Please enter a valid Campaign Title before generating.")
                 else:
                     with st.spinner(f'Batch processing {len(uploaded_files)} files using {client_option} layout...'):
+                        
+                        # --- NEW: PROCESS UPLOADED IMAGES ---
+                        temp_image_dir = None
+                        if client_option == "Mamas & Papas" and use_images and image_files:
+                            temp_image_dir = tempfile.mkdtemp() # Create a temporary folder in the cloud
+                            for img in image_files:
+                                if img.name.lower().endswith('.zip'):
+                                    with zipfile.ZipFile(img, 'r') as zip_ref:
+                                        zip_ref.extractall(temp_image_dir)
+                                else:
+                                    with open(os.path.join(temp_image_dir, img.name), "wb") as f:
+                                        f.write(img.getvalue())
+                        
                         zip_buffer = io.BytesIO()
                         
                         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
@@ -87,12 +105,11 @@ with right_col:
                                     output_path = tmp_out.name
                                 
                                 try:
-                                    # Route to the correct layout logic
                                     if client_option == "Tim Hortons":
                                         format_tim_hortons(input_path, output_path)
                                     elif client_option == "Mamas & Papas":
-                                        # Pass the custom title straight to the script
-                                        format_mamas_papas(input_path, output_path, campaign_title=campaign_title)
+                                        # Pass the temp image directory to the backend script
+                                        format_mamas_papas(input_path, output_path, campaign_title=campaign_title, image_dir=temp_image_dir)
                                         
                                     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                                         clean_name = client_option.replace(' ', '')
@@ -104,6 +121,10 @@ with right_col:
                                     if os.path.exists(input_path): os.remove(input_path)
                                     if os.path.exists(output_path): os.remove(output_path)
                         
+                        # Clean up the temporary image folder once all PDFs are generated
+                        if temp_image_dir and os.path.exists(temp_image_dir):
+                            shutil.rmtree(temp_image_dir)
+                            
                         st.success(f"✅ Successfully zipped {len(uploaded_files)} files!")
                         clean_zip_name = client_option.replace(' ', '')
                         st.download_button(
