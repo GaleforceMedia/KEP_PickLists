@@ -9,6 +9,7 @@ import shutil
 # Import our client layouts
 from mp_layout import generate_picklists as format_mamas_papas
 from th_layout import generate_th_picklists as format_tim_hortons
+from cu_layout import generate_cu_picklists as format_craft_union
 
 # --- PAGE SETUP & BRANDING ---
 st.set_page_config(page_title="KEP Print Group | Pick Lists", page_icon="🖨️", layout="wide")
@@ -44,11 +45,11 @@ left_col, right_col = st.columns([1, 2], gap="large")
 with left_col:
     st.subheader("1. Setup & Upload")
     
-    client_option = st.selectbox("Select Layout Mode", ("Tim Hortons", "Mamas & Papas"))
+    client_option = st.selectbox("Select Layout Mode", ("Tim Hortons", "Mamas & Papas", "PrintFlo - CU"))
     
     campaign_title = st.text_input("Campaign Title (Prints on PDF)", "Enter Campaign Name...")
     
-    # --- NEW: CONDITIONAL IMAGE UPLOADER ---
+    # --- CONDITIONAL IMAGE UPLOADER ---
     use_images = False
     image_files = None
     if client_option == "Mamas & Papas":
@@ -76,15 +77,15 @@ with right_col:
             generate_standard_btn = st.button(f"Generate {client_option} PDFs ({len(uploaded_files)} files)")
             
             if generate_standard_btn:
-                if client_option == "Mamas & Papas" and (campaign_title == "" or campaign_title == "Enter Campaign Name..."):
+                if client_option in ["Mamas & Papas", "PrintFlo - CU"] and (campaign_title == "" or campaign_title == "Enter Campaign Name..."):
                      st.warning("Please enter a valid Campaign Title before generating.")
                 else:
                     with st.spinner(f'Batch processing {len(uploaded_files)} files using {client_option} layout...'):
                         
-                        # --- NEW: PROCESS UPLOADED IMAGES ---
+                        # --- PROCESS UPLOADED IMAGES ---
                         temp_image_dir = None
                         if client_option == "Mamas & Papas" and use_images and image_files:
-                            temp_image_dir = tempfile.mkdtemp() # Create a temporary folder in the cloud
+                            temp_image_dir = tempfile.mkdtemp() 
                             for img in image_files:
                                 if img.name.lower().endswith('.zip'):
                                     with zipfile.ZipFile(img, 'r') as zip_ref:
@@ -108,8 +109,9 @@ with right_col:
                                     if client_option == "Tim Hortons":
                                         format_tim_hortons(input_path, output_path)
                                     elif client_option == "Mamas & Papas":
-                                        # Pass the temp image directory to the backend script
                                         format_mamas_papas(input_path, output_path, campaign_title=campaign_title, image_dir=temp_image_dir)
+                                    elif client_option == "PrintFlo - CU":
+                                        format_craft_union(input_path, output_path, campaign_title=campaign_title)
                                         
                                     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                                         clean_name = client_option.replace(' ', '')
@@ -121,7 +123,6 @@ with right_col:
                                     if os.path.exists(input_path): os.remove(input_path)
                                     if os.path.exists(output_path): os.remove(output_path)
                         
-                        # Clean up the temporary image folder once all PDFs are generated
                         if temp_image_dir and os.path.exists(temp_image_dir):
                             shutil.rmtree(temp_image_dir)
                             
