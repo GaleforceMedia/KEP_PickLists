@@ -10,7 +10,6 @@ def get_column_letter(n):
         n = n // 26 - 1
     return string
 
-# NEW: Added image_dir to the arguments
 def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's Campaign", image_dir=None):
     # --- CONFIGURATION MAP ---
     SHEET_NAME = 0 
@@ -163,21 +162,17 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
             pdf.rect(182, y_start, 18, 15, 'D')
 
             text_x = 10 
-            
-            # --- NEW: SMART IMAGE MATCHING ---
             img_to_use = None
             if image_dir:
                 col_letter = p['col_letter']
                 prod_code = p['code']
                 
-                # Check for files named either J.jpg or 555123.jpg
                 possible_names = [
                     f"{col_letter}.jpg", f"{col_letter}.png", f"{col_letter}.jpeg",
                     f"{col_letter.lower()}.jpg", f"{col_letter.lower()}.png",
                     f"{prod_code}.jpg", f"{prod_code}.png", f"{prod_code}.jpeg"
                 ]
 
-                # Walk through the directory (handles cases where a ZIP file contains a subfolder)
                 for root, dirs, files in os.walk(image_dir):
                     for file in files:
                         if file in possible_names:
@@ -219,31 +214,71 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
 
     pdf.output(output_pdf)
 
-def batch_process():
-    excel_files = [f for f in os.listdir('.') if f.endswith('.xlsx') and not f.startswith('~$')]
-    
-    if not excel_files:
-        print("No Excel files found in the current folder to process.")
-        return
+# --- NEW: DHL DATA EXTRACTOR ---
+def extract_dhl_data(excel_file, ref, weight, parcels, dispatch_date, account_no="F090406"):
+    SHEET_NAME = 0 
+    STORE_START_ROW = 7      
+    STORE_NAME_COL = 2       
+    ADDRESS_COL = 7          
+    POSTCODE_COL = 8         
+    PRODUCT_START_COL = 9    
 
-    print(f"\n--- BATCH MODE INITIATED ---")
-    print(f"Found {len(excel_files)} spreadsheets to process.\n")
-    
-    for excel_file in excel_files:
-        base_name = os.path.splitext(excel_file)[0]
-        output_pdf = f"{base_name}.pdf"
-        
-        print(f"Processing: {excel_file}")
-        generate_picklists(excel_file, output_pdf)
-        
-    print("\n--- BATCH COMPLETE ---")
+    try:
+        df = pd.read_excel(excel_file, sheet_name=SHEET_NAME, header=None)
+    except Exception:
+        return []
 
-if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        generate_picklists(sys.argv[1], sys.argv[2])
-    elif len(sys.argv) == 1:
-        batch_process()
-    else:
-        print("Usage:")
-        print("Batch Mode: python3 mp_layout.py")
-        print("Manual Mode: python3 mp_layout.py \"Input.xlsx\" \"Output.pdf\"")
+    dhl_rows = []
+    
+    for index, row in df.iloc[STORE_START_ROW:].iterrows():
+        store_name = row[STORE_NAME_COL]
+        if pd.isna(store_name) or str(store_name).strip() == "":
+            continue
+            
+        store_name = str(store_name).strip()
+        address = str(row[ADDRESS_COL]).strip() if not pd.isna(row[ADDRESS_COL]) else ""
+        postcode = str(row[POSTCODE_COL]).strip() if not pd.isna(row[POSTCODE_COL]) else ""
+        
+        # Determine if this store is getting ANY items
+        has_items = False
+        for col_idx in range(PRODUCT_START_COL, len(df.columns)):
+            val = row[col_idx]
+            if not pd.isna(val):
+                try:
+                    qty = int(float(val))
+                    if qty > 0:
+                        has_items = True
+                        break
+                except ValueError:
+                    pass
+                    
+        # Only add to DHL if they actually have an active pick
+        if has_items:
+            # Splitting the raw address string to fit into DHL's separated boxes
+            addr_parts = [p.strip() for p in address.split(',') if p.strip()]
+            addr2 = addr_parts[0] if len(addr_parts) > 0 else ""
+            addr3 = addr_parts[1] if len(addr_parts) > 1 else ""
+            addr4 = ", ".join(addr_parts[2:]) if len(addr_parts) > 2 else ""
+            
+            dhl_rows.append({
+                'Account Number': account_no,
+                'Full Name': store_name,
+                'Address 1': 'Mamas & Papas',
+                'Address 2': addr2,
+                'Address 3': addr3,
+                'Address 4': addr4,
+                'Postcode': postcode,
+                'Country': 'United Kingdom',
+                'Email': '',
+                'FAO': 'General Manager',
+                'Tel No': '',
+                'No of items': parcels,
+                'Weight kg': weight,
+                'Notes': '',
+                'Delivery Email': '',
+                'Job Ref': ref,
+                'Service': '1',
+                'Dispatch Date': dispatch_date
+            })
+            
+    return dhl_rows
