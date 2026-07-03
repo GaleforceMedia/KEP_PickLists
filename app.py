@@ -6,16 +6,16 @@ import zipfile
 import io
 import shutil
 import base64
+import datetime
 
-# Import our client layouts
-from mp_layout import generate_picklists as format_mamas_papas
+# Import our client layouts and the new DHL extractor
+from mp_layout import generate_picklists as format_mamas_papas, extract_dhl_data
 from th_layout import generate_th_picklists as format_tim_hortons
 from cu_layout import generate_cu_picklists as format_craft_union
 
 # --- PAGE SETUP & GLOBAL BRANDING ---
 st.set_page_config(page_title="KEP Print Group | Pick Lists", page_icon="🖨️", layout="wide")
 
-# You can change the hex code here if KEP uses a specific Pantone/Brand Blue
 KEP_BLUE = "#004B87" 
 
 st.markdown(f"""
@@ -40,10 +40,8 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# --- CUSTOM BLUE HEADER WITH SVG LOGO ---
 def render_header():
     try:
-        # Read the local SVG file and convert it for web display
         with open("logo.svg", "rb") as image_file:
             base64_svg = base64.b64encode(image_file.read()).decode("utf-8")
         
@@ -54,14 +52,12 @@ def render_header():
         """
         st.markdown(header_html, unsafe_allow_html=True)
     except FileNotFoundError:
-        # Safety net: If logo.svg is missing, still draw the blue banner with text
         st.markdown(f"""
         <div style="background-color: {KEP_BLUE}; padding: 30px; border-radius: 8px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
             <h1 style="color: white; margin: 0; font-family: Arial, sans-serif;">KEP Print Group</h1>
         </div>
         """, unsafe_allow_html=True)
 
-# Trigger the custom header
 render_header()
 
 # --- MAIN APP LAYOUT ---
@@ -71,20 +67,44 @@ with left_col:
     st.subheader("1. Setup & Upload")
     
     client_option = st.selectbox("Select Layout Mode", ("Tim Hortons", "Mamas & Papas", "PrintFlo - CU"))
-    
     campaign_title = st.text_input("Campaign Title (Prints on PDF)", "Enter Campaign Name...")
     
-    # --- CONDITIONAL IMAGE UPLOADER ---
+    # --- M&P CONDITIONAL SETTINGS (IMAGES & DHL) ---
     use_images = False
     image_files = None
+    generate_dhl = False
+    dhl_ref = ""
+    dhl_weight = "3"
+    dhl_parcels = 1
+    dhl_date = None
+
     if client_option == "Mamas & Papas":
+        st.divider()
+        st.write("#### M&P Extra Options")
+        
+        # 1. Images
         use_images = st.checkbox("Include Product Images (Thumbnails)")
         if use_images:
-            st.caption("Upload images named by Column Letter (e.g., J.jpg) or Product Code. You can upload multiple images or a single .zip file.")
+            st.caption("Upload images named by Column Letter (e.g., J.jpg) or Product Code.")
             image_files = st.file_uploader("Upload Images or .zip", type=["jpg", "jpeg", "png", "zip"], accept_multiple_files=True)
             
+        st.write(" ") 
+        
+        # 2. DHL CSV
+        generate_dhl = st.checkbox("Generate DHL Shipping CSV")
+        if generate_dhl:
+            st.caption("Configure the batch file for DHL.")
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                # Default to today's date
+                dhl_date = st.date_input("Dispatch Date", datetime.date.today())
+                dhl_ref = st.text_input("Customer Reference", "M&P Campaign")
+            with d_col2:
+                # Dropdown for 1kg to 10kg
+                dhl_weight = st.selectbox("Weight", [f"{i}kg" for i in range(1, 11)], index=2)
+                dhl_parcels = st.number_input("Number of Parcels", min_value=1, value=1)
+            
     st.divider()
-    
     uploaded_files = st.file_uploader("Upload raw Excel files (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
 # --- LIVE PREVIEW & GENERATION LOGIC ---
@@ -107,8 +127,9 @@ with right_col:
                 else:
                     with st.spinner(f'Batch processing {len(uploaded_files)} files using {client_option} layout...'):
                         
-                        # --- PROCESS UPLOADED IMAGES ---
+                        all_dhl_rows = []
                         temp_image_dir = None
+                        
                         if client_option == "Mamas & Papas" and use_images and image_files:
                             temp_image_dir = tempfile.mkdtemp() 
                             for img in image_files:
@@ -133,8 +154,18 @@ with right_col:
                                 try:
                                     if client_option == "Tim Hortons":
                                         format_tim_hortons(input_path, output_path)
+                                        
                                     elif client_option == "Mamas & Papas":
                                         format_mamas_papas(input_path, output_path, campaign_title=campaign_title, image_dir=temp_image_dir)
+                                        
+                                        # RUN DHL EXTRACTION IF TICKED
+                                        if generate_dhl:
+                                            # Strip the "kg" off the string so DHL just gets the number
+                                            w_val = dhl_weight.replace("kg", "")
+                                            d_str = dhl_date.strftime("%d/%m/%Y")
+                                            rows = extract_dhl_data(input_path, dhl_ref, w_val, dhl_parcels, d_str)
+                                            all_dhl_rows.extend(rows)
+                                            
                                     elif client_option == "PrintFlo - CU":
                                         format_craft_union(input_path, output_path, campaign_title=campaign_title)
                                         
@@ -147,14 +178,27 @@ with right_col:
                                 finally:
                                     if os.path.exists(input_path): os.remove(input_path)
                                     if os.path.exists(output_path): os.remove(output_path)
-                        
+                            
+                            # --- APPEND DHL CSV TO THE ZIP FILE ---
+                            if client_option == "Mamas & Papas" and generate_dhl and all_dhl_rows:
+                                df_dhl = pd.DataFrame(all_dhl_rows)
+                                # Force DHL's exact required template column order
+                                cols = ['Account Number', 'Full Name', 'Address 1', 'Address 2', 'Address 3', 'Address 4', 'Postcode', 'Country', 'Email', 'FAO', 'Tel No', 'No of items', 'Weight kg', 'Notes', 'Delivery Email', 'Job Ref', 'Service', 'Dispatch Date']
+                                df_dhl = df_dhl.reindex(columns=cols)
+                                
+                                csv_buffer = io.StringIO()
+                                df_dhl.to_csv(csv_buffer, index=False)
+                                
+                                clean_campaign = campaign_title.replace(' ', '_')
+                                zip_file.writestr(f"DHL_Batch_{clean_campaign}.csv", csv_buffer.getvalue())
+
                         if temp_image_dir and os.path.exists(temp_image_dir):
                             shutil.rmtree(temp_image_dir)
                             
                         st.success(f"✅ Successfully zipped {len(uploaded_files)} files!")
                         clean_zip_name = client_option.replace(' ', '')
                         st.download_button(
-                            label="⬇️ Download All PDFs (ZIP)",
+                            label="⬇️ Download All PDFs & Shipping Labels (ZIP)",
                             data=zip_buffer.getvalue(),
                             file_name=f"KEP_{clean_zip_name}_PickLists.zip",
                             mime="application/zip"
