@@ -5,18 +5,22 @@ import os
 import zipfile
 import io
 import shutil
+import base64
 
 # Import our client layouts
 from mp_layout import generate_picklists as format_mamas_papas
 from th_layout import generate_th_picklists as format_tim_hortons
 from cu_layout import generate_cu_picklists as format_craft_union
 
-# --- PAGE SETUP & BRANDING ---
+# --- PAGE SETUP & GLOBAL BRANDING ---
 st.set_page_config(page_title="KEP Print Group | Pick Lists", page_icon="🖨️", layout="wide")
 
-st.markdown("""
+# You can change the hex code here if KEP uses a specific Pantone/Brand Blue
+KEP_BLUE = "#004B87" 
+
+st.markdown(f"""
     <style>
-    .stButton>button {
+    .stButton>button {{
         background-color: #000000;
         color: white;
         border-radius: 4px;
@@ -24,22 +28,43 @@ st.markdown("""
         border: none;
         width: 100%;
         padding: 10px;
-    }
-    .stButton>button:hover { background-color: #333333; color: white; }
-    h1, h2, h3 { font-family: 'Arial', sans-serif; }
-    [data-testid="stColumn"]:nth-child(1) {
+    }}
+    .stButton>button:hover {{ background-color: #333333; color: white; }}
+    h1, h2, h3 {{ font-family: 'Arial', sans-serif; }}
+    [data-testid="stColumn"]:nth-child(1) {{
         background-color: #f8f9fa;
         padding: 20px;
         border-radius: 8px;
         border: 1px solid #e0e0e0;
-    }
+    }}
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🖨️ KEP Print Group - Pick List Generator")
-st.write("Convert raw client spreadsheets into formatted dispatch documents. Upload multiple files to batch process.")
-st.divider()
+# --- CUSTOM BLUE HEADER WITH SVG LOGO ---
+def render_header():
+    try:
+        # Read the local SVG file and convert it for web display
+        with open("logo.svg", "rb") as image_file:
+            base64_svg = base64.b64encode(image_file.read()).decode("utf-8")
+        
+        header_html = f"""
+        <div style="background-color: {KEP_BLUE}; padding: 30px; border-radius: 8px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <img src="data:image/svg+xml;base64,{base64_svg}" alt="KEP Print Group Logo" style="max-height: 70px;">
+        </div>
+        """
+        st.markdown(header_html, unsafe_allow_html=True)
+    except FileNotFoundError:
+        # Safety net: If logo.svg is missing, still draw the blue banner with text
+        st.markdown(f"""
+        <div style="background-color: {KEP_BLUE}; padding: 30px; border-radius: 8px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h1 style="color: white; margin: 0; font-family: Arial, sans-serif;">KEP Print Group</h1>
+        </div>
+        """, unsafe_allow_html=True)
 
+# Trigger the custom header
+render_header()
+
+# --- MAIN APP LAYOUT ---
 left_col, right_col = st.columns([1, 2], gap="large")
 
 with left_col:
