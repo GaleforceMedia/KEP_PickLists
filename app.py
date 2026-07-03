@@ -1,94 +1,123 @@
 import streamlit as st
+import pandas as pd
 import tempfile
 import os
 
-# Import your existing scripts
-# We are importing the main functions from the files you provided
+# Import our specific client layouts
 from mp_layout import generate_picklists as format_mamas_papas
 from th_layout import generate_th_picklists as format_tim_hortons
+# Import our new universal custom layout
+from custom_layout import generate_custom_picklist
 
-# --- KEP BRANDING & PAGE SETUP ---
-st.set_page_config(page_title="KEP Print Group - Pick Lists", page_icon="🖨️", layout="centered")
+# --- PAGE SETUP & KEP BRANDING ---
+st.set_page_config(page_title="KEP Print Group | Pick Lists", page_icon="🖨️", layout="wide")
 
-# Optional: Add a simple CSS block to make it feel more like an internal tool
 st.markdown("""
     <style>
+    /* KEP Branding - Black buttons, bold text */
     .stButton>button {
-        width: 100%;
-        background-color: #005A9C; /* Replace with exact KEP Blue if you have the hex code */
+        background-color: #000000;
         color: white;
+        border-radius: 4px;
+        font-weight: bold;
+        border: none;
+        width: 100%;
+        padding: 10px;
+    }
+    .stButton>button:hover {
+        background-color: #333333;
+        color: white;
+        border: none;
+    }
+    h1, h2, h3 { font-family: 'Arial', sans-serif; }
+    /* Subtle background for the control panel */
+    [data-testid="stColumn"]:nth-child(1) {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
     }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🖨️ KEP Print Group")
-st.subheader("Automated Pick List Generator")
-st.write("Upload a raw client spreadsheet to generate a formatted PDF pick list for dispatch.")
+# --- HEADER ---
+st.title("🖨️ KEP Print Group - Pick List Generator")
+st.write("Convert raw client spreadsheets into formatted dispatch documents.")
 st.divider()
 
-# --- APP INTERFACE ---
+# --- MAIN DASHBOARD LAYOUT ---
+left_col, right_col = st.columns([1, 2], gap="large")
 
-# 1. Client Layout Selector
-client_option = st.selectbox(
-    "1. Select the Client Layout",
-    ("Tim Hortons", "Mamas & Papas") # We can add Craft Union here later
-)
-
-# Show a little preview of what the layout does based on your scripts
-if client_option == "Tim Hortons":
-    st.caption("Layout: High-density single-column format, up to 20 items per page.")
-elif client_option == "Mamas & Papas":
-    st.caption("Layout: Standard grid format with 'Required' and 'Received' check boxes.")
-
-# 2. File Uploader
-uploaded_file = st.file_uploader("2. Upload Raw Spreadsheet (.xlsx)", type=["xlsx"])
-
-# 3. Generate Process
-if uploaded_file is not None:
-    if st.button("Generate PDF Pick List"):
+with left_col:
+    st.subheader("1. Configuration")
+    
+    client_option = st.selectbox(
+        "Select Layout",
+        ("Tim Hortons", "Mamas & Papas", "Custom Setup (Dynamic)")
+    )
+    
+    # --- DYNAMIC CUSTOM SETTINGS ---
+    custom_settings = {}
+    if client_option == "Custom Setup (Dynamic)":
+        st.caption("Define the exact locations for this specific spreadsheet.")
         
-        # We use a spinner to show the user something is happening
-        with st.spinner(f'Applying {client_option} layout rules...'):
-            
-            # Create temporary files for the input (Excel) and output (PDF)
-            # This is necessary because your fpdf scripts require file paths
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_in:
-                tmp_in.write(uploaded_file.getvalue())
-                input_path = tmp_in.name
-                
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_out:
-                output_path = tmp_out.name
+        c1, c2 = st.columns(2)
+        with c1:
+            custom_settings['store_row'] = st.number_input("Store Data Starts (Row)", min_value=1, value=7) - 1 # Subtract 1 for zero-indexing
+            custom_settings['store_col'] = st.number_input("Store Name (Col A=1)", min_value=1, value=1) - 1
+        with c2:
+            custom_settings['address_col'] = st.number_input("Address (Col A=1)", min_value=1, value=2) - 1
+            custom_settings['pick_col'] = st.number_input("Picks Start (Col A=1)", min_value=1, value=5) - 1
 
-            try:
-                # Route to the correct formatting function we imported
-                if client_option == "Tim Hortons":
-                    format_tim_hortons(input_path, output_path)
-                elif client_option == "Mamas & Papas":
-                    format_mamas_papas(input_path, output_path)
-                
-                # Check if the PDF was actually created
-                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    st.success("✅ Pick list generated successfully!")
+    st.subheader("2. Data Upload")
+    uploaded_file = st.file_uploader("Upload raw Excel file (.xlsx)", type=["xlsx"])
+    
+    generate_btn = st.button("Generate PDF Pick List")
+
+# --- LIVE PREVIEW & GENERATION LOGIC ---
+with right_col:
+    st.subheader("Data Preview")
+    
+    if uploaded_file is not None:
+        # Show a preview to the team before they commit
+        preview_df = pd.read_excel(uploaded_file, header=None, nrows=15)
+        st.dataframe(preview_df, use_container_width=True, height=300)
+        
+        if generate_btn:
+            with st.spinner(f'Applying {client_option} logic...'):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_in:
+                    tmp_in.write(uploaded_file.getvalue())
+                    input_path = tmp_in.name
                     
-                    # Serve the PDF back to the user
-                    with open(output_path, "rb") as pdf_file:
-                        pdf_bytes = pdf_file.read()
-                        
-                    st.download_button(
-                        label="⬇️ Download PDF Pick List",
-                        data=pdf_bytes,
-                        file_name=f"KEP_{client_option.replace(' ', '')}_PickList.pdf",
-                        mime="application/pdf"
-                    )
-                else:
-                    st.error("The PDF was not generated. Please check that the spreadsheet matches the expected layout format.")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_out:
+                    output_path = tmp_out.name
 
-            except Exception as e:
-                st.error(f"An error occurred while processing: {e}")
-            
-            finally:
-                # Clean up the temporary files so we don't clog up the server
-                if os.path.exists(input_path):
-                    os.remove(input_path)
-                if os.path.exists(output_path):
-                    os.remove(output_path)
+                try:
+                    # ROUTE TO THE CORRECT SCRIPT
+                    if client_option == "Tim Hortons":
+                        format_tim_hortons(input_path, output_path)
+                    elif client_option == "Mamas & Papas":
+                        format_mamas_papas(input_path, output_path)
+                    elif client_option == "Custom Setup (Dynamic)":
+                        generate_custom_picklist(input_path, output_path, **custom_settings)
+                    
+                    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                        st.success("✅ Pick list generated successfully!")
+                        with open(output_path, "rb") as pdf_file:
+                            st.download_button(
+                                label="⬇️ Download PDF Pick List",
+                                data=pdf_file.read(),
+                                file_name=f"KEP_{client_option.replace(' ', '')}_PickList.pdf",
+                                mime="application/pdf",
+                                key="download_btn" # Unique key for Streamlit
+                            )
+                    else:
+                        st.error("Failed to generate PDF. Please check the spreadsheet layout.")
+
+                except Exception as e:
+                    st.error(f"Processing Error: {e}")
+                finally:
+                    if os.path.exists(input_path): os.remove(input_path)
+                    if os.path.exists(output_path): os.remove(output_path)
+    else:
+        st.info("Upload a spreadsheet on the left to preview the raw data layout here.")
