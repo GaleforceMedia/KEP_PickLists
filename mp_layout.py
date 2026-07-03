@@ -11,7 +11,7 @@ def get_column_letter(n):
     return string
 
 def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's Campaign", image_dir=None):
-    # --- CONFIGURATION MAP ---
+    # --- EXACT COLUMN MAPPING FOR M&P ---
     SHEET_NAME = 0 
     JOB_ROW_INDEX = 1       
     VERSIONS_ROW_INDEX = 6  
@@ -19,10 +19,13 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
     CODE_ROW_INDEX = 5      
     
     STORE_START_ROW = 7      
-    STORE_NAME_COL = 2       
-    ADDRESS_COL = 7          
-    POSTCODE_COL = 8         
-    PRODUCT_START_COL = 9    
+    FAO_COL = 1              # Column B
+    ADDR2_COL = 3            # Column D
+    ADDR3_COL = 5            # Column F
+    ADDR4_COL = 6            # Column G
+    POSTCODE_COL = 7         # Column H
+    STORE_NAME_COL = 8       # Column I
+    PRODUCT_START_COL = 9    # Column J
 
     try:
         df = pd.read_excel(excel_file, sheet_name=SHEET_NAME, header=None)
@@ -49,17 +52,11 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
                 "col_letter": get_column_letter(col_idx)
             })
 
-    # 2. Parse the Stores
+    # 2. Parse the Stores using the new column maps
     store_orders = {}
     for index, row in df.iloc[STORE_START_ROW:].iterrows():
-        store_name = row[STORE_NAME_COL]
-        if pd.isna(store_name) or str(store_name).strip() == "":
-            continue
-            
-        store_name = str(store_name).strip()
-        address = str(row[ADDRESS_COL]).strip() if not pd.isna(row[ADDRESS_COL]) else ""
-        postcode = str(row[POSTCODE_COL]).strip() if not pd.isna(row[POSTCODE_COL]) else ""
-        
+        # Step A: Check if this store has any items to pick first
+        has_items = False
         items_for_store = []
         
         for col_idx, product_info in enumerate(products):
@@ -69,9 +66,11 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
             val = row[PRODUCT_START_COL + col_idx]
             qty = 0 
             
-            if not pd.isna(val):
+            if pd.notna(val):
                 try:
                     qty = int(float(val))
+                    if qty > 0:
+                        has_items = True
                 except ValueError:
                     qty = 0 
                     
@@ -80,12 +79,31 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
                 "qty": qty
             })
                 
-        if items_for_store:
-            store_orders[store_name] = {
-                "address": address, 
-                "postcode": postcode, 
-                "items": items_for_store
-            }
+        # If they don't have items, skip the store entirely
+        if not has_items:
+            continue
+            
+        # Step B: Build the perfect Store Name & Address
+        raw_store = str(row[STORE_NAME_COL]).strip() if pd.notna(row[STORE_NAME_COL]) and str(row[STORE_NAME_COL]) != 'nan' else ""
+        if not raw_store:
+            # Fallback to column C just in case column I is accidentally left blank
+            raw_store = str(row[2]).strip() if pd.notna(row[2]) and str(row[2]) != 'nan' else "Unknown Store"
+        
+        store_name = f"M&P {raw_store}"
+        
+        addr2 = str(row[ADDR2_COL]).strip() if pd.notna(row[ADDR2_COL]) and str(row[ADDR2_COL]) != 'nan' else ""
+        addr3 = str(row[ADDR3_COL]).strip() if pd.notna(row[ADDR3_COL]) and str(row[ADDR3_COL]) != 'nan' else ""
+        addr4 = str(row[ADDR4_COL]).strip() if pd.notna(row[ADDR4_COL]) and str(row[ADDR4_COL]) != 'nan' else ""
+        postcode = str(row[POSTCODE_COL]).strip() if pd.notna(row[POSTCODE_COL]) and str(row[POSTCODE_COL]) != 'nan' else ""
+        
+        address_parts = [a for a in [addr2, addr3, addr4] if a]
+        address = ", ".join(address_parts)
+        
+        store_orders[store_name] = {
+            "address": address, 
+            "postcode": postcode, 
+            "items": items_for_store
+        }
 
     # 3. Generate the PDF
     pdf = FPDF()
@@ -100,7 +118,8 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
         pdf.ln(3)
         
         pdf.set_font("Arial", size=18, style='B')
-        pdf.cell(200, 8, txt=f"Store: {store}", ln=True)
+        safe_store = store.encode('latin-1', 'replace').decode('latin-1')
+        pdf.cell(200, 8, txt=f"Store: {safe_store}", ln=True)
         
         if addr and addr != "nan":
             pdf.set_font("Arial", size=11, style='I')
@@ -214,14 +233,20 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
 
     pdf.output(output_pdf)
 
-# --- NEW: DHL DATA EXTRACTOR ---
+
+# --- REWRITTEN DHL DATA EXTRACTOR ---
 def extract_dhl_data(excel_file, ref, weight, parcels, dispatch_date, account_no="F090406"):
     SHEET_NAME = 0 
     STORE_START_ROW = 7      
-    STORE_NAME_COL = 2       
-    ADDRESS_COL = 7          
-    POSTCODE_COL = 8         
-    PRODUCT_START_COL = 9    
+    
+    # Strict Column mapping for DHL
+    FAO_COL = 1              # Column B
+    ADDR2_COL = 3            # Column D
+    ADDR3_COL = 5            # Column F
+    ADDR4_COL = 6            # Column G
+    POSTCODE_COL = 7         # Column H
+    STORE_NAME_COL = 8       # Column I
+    PRODUCT_START_COL = 9    # Column J 
 
     try:
         df = pd.read_excel(excel_file, sheet_name=SHEET_NAME, header=None)
@@ -231,19 +256,11 @@ def extract_dhl_data(excel_file, ref, weight, parcels, dispatch_date, account_no
     dhl_rows = []
     
     for index, row in df.iloc[STORE_START_ROW:].iterrows():
-        store_name = row[STORE_NAME_COL]
-        if pd.isna(store_name) or str(store_name).strip() == "":
-            continue
-            
-        store_name = str(store_name).strip()
-        address = str(row[ADDRESS_COL]).strip() if not pd.isna(row[ADDRESS_COL]) else ""
-        postcode = str(row[POSTCODE_COL]).strip() if not pd.isna(row[POSTCODE_COL]) else ""
-        
-        # Determine if this store is getting ANY items
+        # 1. Determine if this store is getting ANY items
         has_items = False
         for col_idx in range(PRODUCT_START_COL, len(df.columns)):
             val = row[col_idx]
-            if not pd.isna(val):
+            if pd.notna(val):
                 try:
                     qty = int(float(val))
                     if qty > 0:
@@ -252,30 +269,40 @@ def extract_dhl_data(excel_file, ref, weight, parcels, dispatch_date, account_no
                 except ValueError:
                     pass
                     
-        # Only add to DHL if they actually have an active pick
+        # 2. Only map to DHL if they actually have an active pick
         if has_items:
-            # Splitting the raw address string to fit into DHL's separated boxes
-            addr_parts = [p.strip() for p in address.split(',') if p.strip()]
-            addr2 = addr_parts[0] if len(addr_parts) > 0 else ""
-            addr3 = addr_parts[1] if len(addr_parts) > 1 else ""
-            addr4 = ", ".join(addr_parts[2:]) if len(addr_parts) > 2 else ""
+            fao = str(row[FAO_COL]).strip() if pd.notna(row[FAO_COL]) and str(row[FAO_COL]) != 'nan' else "General Manager"
+            addr2 = str(row[ADDR2_COL]).strip() if pd.notna(row[ADDR2_COL]) and str(row[ADDR2_COL]) != 'nan' else ""
+            addr3 = str(row[ADDR3_COL]).strip() if pd.notna(row[ADDR3_COL]) and str(row[ADDR3_COL]) != 'nan' else ""
+            addr4 = str(row[ADDR4_COL]).strip() if pd.notna(row[ADDR4_COL]) and str(row[ADDR4_COL]) != 'nan' else ""
+            postcode = str(row[POSTCODE_COL]).strip() if pd.notna(row[POSTCODE_COL]) and str(row[POSTCODE_COL]) != 'nan' else ""
+            
+            raw_store = str(row[STORE_NAME_COL]).strip() if pd.notna(row[STORE_NAME_COL]) and str(row[STORE_NAME_COL]) != 'nan' else ""
+            if not raw_store:
+                raw_store = str(row[2]).strip() if pd.notna(row[2]) and str(row[2]) != 'nan' else "Unknown"
+                
+            full_name = f"M&P {raw_store}"
+            
+            # Automatically generate the email formatted like: birmingham@mamasandpapas.com
+            clean_for_email = raw_store.split()[0].lower().replace("&", "").replace("-", "") if raw_store else "unknown"
+            email = f"{clean_for_email}@mamasandpapas.com"
             
             dhl_rows.append({
                 'Account Number': account_no,
-                'Full Name': store_name,
+                'Full Name': full_name[:35], # Kept under 35 characters for DHL software limits
                 'Address 1': 'Mamas & Papas',
-                'Address 2': addr2,
-                'Address 3': addr3,
-                'Address 4': addr4,
+                'Address 2': addr2[:35],
+                'Address 3': addr3[:35],
+                'Address 4': addr4[:35],
                 'Postcode': postcode,
                 'Country': 'United Kingdom',
-                'Email': '',
-                'FAO': 'General Manager',
-                'Tel No': '',
+                'Email': email,
+                'FAO': fao[:35],
+                'Tel No': '01827 280880',
                 'No of items': parcels,
                 'Weight kg': weight,
                 'Notes': '',
-                'Delivery Email': '',
+                'Delivery Email': email,
                 'Job Ref': ref,
                 'Service': '1',
                 'Dispatch Date': dispatch_date
