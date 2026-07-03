@@ -11,7 +11,8 @@ def get_column_letter(n):
         n = n // 26 - 1
     return string
 
-def generate_picklists(excel_file, output_pdf):
+# Added campaign_title argument here
+def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's Campaign"):
     # --- CONFIGURATION MAP ---
     SHEET_NAME = 0 
     JOB_ROW_INDEX = 1       
@@ -100,7 +101,10 @@ def generate_picklists(excel_file, output_pdf):
     def draw_header(store, addr, pcode):
         pdf.add_page()
         pdf.set_font("Arial", size=16, style='B')
-        pdf.cell(200, 8, txt="Mama's and Papa's Ocarro999", ln=True, align='C')
+        
+        # Dynamically inject the web app title
+        safe_title = campaign_title.encode('latin-1', 'replace').decode('latin-1')
+        pdf.cell(200, 8, txt=safe_title, ln=True, align='C')
         pdf.ln(3)
         
         pdf.set_font("Arial", size=18, style='B')
@@ -206,7 +210,6 @@ def generate_picklists(excel_file, output_pdf):
         pdf.set_text_color(0, 0, 0) 
 
     pdf.output(output_pdf)
-    print(f"  -> Success! Saved to {output_pdf}")
 
 def batch_process():
     excel_files = [f for f in os.listdir('.') if f.endswith('.xlsx') and not f.startswith('~$')]
