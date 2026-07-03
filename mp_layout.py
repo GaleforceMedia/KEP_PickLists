@@ -3,7 +3,6 @@ from fpdf import FPDF
 import sys
 import os
 
-# Helper function to convert column index to Excel column letter (e.g., 9 -> 'J')
 def get_column_letter(n):
     string = ""
     while n >= 0:
@@ -11,8 +10,8 @@ def get_column_letter(n):
         n = n // 26 - 1
     return string
 
-# Added campaign_title argument here
-def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's Campaign"):
+# NEW: Added image_dir to the arguments
+def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's Campaign", image_dir=None):
     # --- CONFIGURATION MAP ---
     SHEET_NAME = 0 
     JOB_ROW_INDEX = 1       
@@ -21,15 +20,10 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
     CODE_ROW_INDEX = 5      
     
     STORE_START_ROW = 7      
-    STORE_NAME_COL = 2       # Column C
-    ADDRESS_COL = 7          # Column H (Adjust this to match your sheet)
-    POSTCODE_COL = 8         # Column I (Adjust this to match your sheet)
-    PRODUCT_START_COL = 9    # Column J (Restored so it stops missing J!)
-
-    IMAGE_DIR = "Images"
-    
-    # Get the name of the spreadsheet without the .xlsx extension
-    base_name = os.path.splitext(os.path.basename(excel_file))[0]
+    STORE_NAME_COL = 2       
+    ADDRESS_COL = 7          
+    POSTCODE_COL = 8         
+    PRODUCT_START_COL = 9    
 
     try:
         df = pd.read_excel(excel_file, sheet_name=SHEET_NAME, header=None)
@@ -102,7 +96,6 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
         pdf.add_page()
         pdf.set_font("Arial", size=16, style='B')
         
-        # Dynamically inject the web app title
         safe_title = campaign_title.encode('latin-1', 'replace').decode('latin-1')
         pdf.cell(200, 8, txt=safe_title, ln=True, align='C')
         pdf.ln(3)
@@ -114,7 +107,6 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
             pdf.set_font("Arial", size=11, style='I')
             safe_addr = addr.encode('latin-1', 'replace').decode('latin-1')
             safe_pcode = pcode.encode('latin-1', 'replace').decode('latin-1')
-            
             full_address = f"{safe_addr}, {safe_pcode}" if pcode and pcode != "nan" else safe_addr
             pdf.multi_cell(0, 5, txt=f"Location: {full_address}")
         
@@ -171,12 +163,28 @@ def generate_picklists(excel_file, output_pdf, campaign_title="Mama's and Papa's
             pdf.rect(182, y_start, 18, 15, 'D')
 
             text_x = 10 
-            col_letter = p['col_letter'] 
             
-            img_jpg = os.path.join(IMAGE_DIR, base_name, f"{col_letter}.jpg")
-            img_png = os.path.join(IMAGE_DIR, base_name, f"{col_letter}.png")
-            
-            img_to_use = img_jpg if os.path.exists(img_jpg) else img_png if os.path.exists(img_png) else None
+            # --- NEW: SMART IMAGE MATCHING ---
+            img_to_use = None
+            if image_dir:
+                col_letter = p['col_letter']
+                prod_code = p['code']
+                
+                # Check for files named either J.jpg or 555123.jpg
+                possible_names = [
+                    f"{col_letter}.jpg", f"{col_letter}.png", f"{col_letter}.jpeg",
+                    f"{col_letter.lower()}.jpg", f"{col_letter.lower()}.png",
+                    f"{prod_code}.jpg", f"{prod_code}.png", f"{prod_code}.jpeg"
+                ]
+
+                # Walk through the directory (handles cases where a ZIP file contains a subfolder)
+                for root, dirs, files in os.walk(image_dir):
+                    for file in files:
+                        if file in possible_names:
+                            img_to_use = os.path.join(root, file)
+                            break
+                    if img_to_use:
+                        break
             
             if img_to_use:
                 try:
@@ -237,5 +245,5 @@ if __name__ == "__main__":
         batch_process()
     else:
         print("Usage:")
-        print("Batch Mode: python3 generate_picklists.py")
-        print("Manual Mode: python3 generate_picklists.py \"Input.xlsx\" \"Output.pdf\"")
+        print("Batch Mode: python3 mp_layout.py")
+        print("Manual Mode: python3 mp_layout.py \"Input.xlsx\" \"Output.pdf\"")
